@@ -63,10 +63,18 @@ async function handle(req, res) {
       const form = await readForm(req);
       const email = String(form.email ?? '').trim().toLowerCase();
       const name = String(form.name ?? '').trim();
+      const action = String(form.action ?? 'enroll');
       if (!email || !name) return send(res, 400, '<h1>Missing email or name</h1>');
 
       const users = readUsers();
       if (users.some((user) => user.email === email)) return send(res, 409, '<h1>User already exists</h1>');
+
+      if (action === 'existing') {
+        users.push({ id: crypto.randomUUID(), email, name, status: 'active', createdAt: new Date().toISOString() });
+        writeUsers(users);
+        redirect(res, '/admin/users');
+        return;
+      }
 
       const enrollmentUrl = await createEnrollment(email);
       const token = crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '');
@@ -76,8 +84,8 @@ async function handle(req, res) {
       return;
     }
 
-    const rows = readUsers().map((user) => `<tr><td>${escapeHtml(user.email)}</td><td>${escapeHtml(user.name)}</td><td>${escapeHtml(user.status)}</td><td><a href="/admin/invite?token=${encodeURIComponent(user.token)}">Invite</a></td></tr>`).join('');
-    send(res, 200, `<h1>Users</h1><p><a href="/admin/logout">Logout</a></p><form method="post"><input name="email" type="email" placeholder="email" required> <input name="name" placeholder="name" required> <button>Create + enroll</button></form><table>${rows}</table>`);
+    const rows = readUsers().map((user) => `<tr><td>${escapeHtml(user.email)}</td><td>${escapeHtml(user.name)}</td><td>${escapeHtml(user.status)}</td><td>${user.token ? `<a href="/admin/invite?token=${encodeURIComponent(user.token)}">Invite</a>` : 'Already enrolled'}</td></tr>`).join('');
+    send(res, 200, `<h1>Users</h1><p><a href="/admin/logout">Logout</a></p><h2>Add existing enrolled user</h2><form method="post"><input type="hidden" name="action" value="existing"><input name="email" type="email" placeholder="email" required> <input name="name" placeholder="name" required> <button>Add local user</button></form><h2>Create user and enrollment invite</h2><form method="post"><input type="hidden" name="action" value="enroll"><input name="email" type="email" placeholder="email" required> <input name="name" placeholder="name" required> <button>Create + enroll</button></form><table>${rows}</table>`);
     return;
   }
 
@@ -94,6 +102,7 @@ async function handle(req, res) {
     const token = decodeURIComponent(url.pathname.split('/')[2] ?? '');
     const user = readUsers().find((candidate) => candidate.token === token);
     if (!user) return send(res, 404, '<h1>Invite not found</h1>');
+    if (!user.enrollmentUrl) return send(res, 404, '<h1>No enrollment invite for this user</h1>');
     const qr = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(user.enrollmentUrl)}`;
     send(res, 200, `<h1>Invite ${escapeHtml(user.name)}</h1><p>Scan this enrollment QR code in Node-hud Authenticator.</p><p><img src="${qr}" width="280" height="280" alt="Enrollment QR"></p><p><a href="/app?user=${encodeURIComponent(user.email)}">Open protected app</a></p>`);
     return;

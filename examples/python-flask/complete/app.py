@@ -62,9 +62,20 @@ def admin_users():
     if request.method == "POST":
         email = request.form["email"].strip().lower()
         name = request.form["name"].strip()
+        action = request.form.get("action", "enroll")
         users = read_users()
         if any(user["email"] == email for user in users):
             return page("<h1>User already exists</h1>"), 409
+
+        if action == "existing":
+            users.append({
+                "id": str(uuid.uuid4()),
+                "email": email,
+                "name": name,
+                "status": "active",
+            })
+            write_users(users)
+            return redirect(url_for("admin_users"))
 
         enrollment_url = create_enrollment(email)
         token = secrets.token_urlsafe(32)
@@ -80,10 +91,10 @@ def admin_users():
         return redirect(url_for("admin_invite", token=token))
 
     rows = "".join(
-        f"<tr><td>{escape(user['email'])}</td><td>{escape(user['name'])}</td><td>{escape(user['status'])}</td><td><a href='/admin/invite/{escape(user['token'])}'>Invite</a></td></tr>"
+        f"<tr><td>{escape(user['email'])}</td><td>{escape(user['name'])}</td><td>{escape(user['status'])}</td><td>{render_invite_action(user)}</td></tr>"
         for user in read_users()
     )
-    return page(f"<h1>Users</h1><p><a href='/admin/logout'>Logout</a></p><form method='post'><input name='email' type='email' placeholder='email' required> <input name='name' placeholder='name' required> <button>Create + enroll</button></form><table>{rows}</table>")
+    return page(f"<h1>Users</h1><p><a href='/admin/logout'>Logout</a></p><h2>Add existing enrolled user</h2><form method='post'><input type='hidden' name='action' value='existing'><input name='email' type='email' placeholder='email' required> <input name='name' placeholder='name' required> <button>Add local user</button></form><h2>Create user and enrollment invite</h2><form method='post'><input type='hidden' name='action' value='enroll'><input name='email' type='email' placeholder='email' required> <input name='name' placeholder='name' required> <button>Create + enroll</button></form><table>{rows}</table>")
 
 
 @app.get("/admin/invite/<token>")
@@ -104,6 +115,8 @@ def invite(token):
     user = find_user_by_token(token)
     if not user:
         return page("<h1>Invite not found</h1>"), 404
+    if not user.get("enrollmentUrl"):
+        return page("<h1>No enrollment invite for this user</h1>"), 404
 
     qr = "https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=" + requests.utils.quote(user["enrollmentUrl"], safe="")
     return page(f"<h1>Invite {escape(user['name'])}</h1><p>Scan this enrollment QR code.</p><p><img src='{qr}' width='280' height='280' alt='Enrollment QR'></p><p><a href='/app?user={escape(user['email'])}'>Open app</a></p>")
@@ -194,6 +207,13 @@ def find_user_by_token(token):
 
 def find_user_by_email(email):
     return next((user for user in read_users() if user.get("email") == email and user.get("status") != "disabled"), None)
+
+
+def render_invite_action(user):
+    token = user.get("token")
+    if not token:
+        return "Already enrolled"
+    return f"<a href='/admin/invite/{escape(token)}'>Invite</a>"
 
 
 def activate_user(email):

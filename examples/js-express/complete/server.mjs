@@ -50,17 +50,23 @@ app.get('/admin/logout', (_req, res) => {
 });
 
 app.get('/admin/users', requireAdmin, (req, res) => {
-  const rows = readUsers().map((user) => `<tr><td>${escapeHtml(user.email)}</td><td>${escapeHtml(user.name)}</td><td>${escapeHtml(user.status)}</td><td><a href="/admin/invite/${encodeURIComponent(user.token)}">Invite</a></td></tr>`).join('');
-  res.send(page(`<h1>Users</h1><p><a href="/admin/logout">Logout</a></p><form method="post"><input name="email" type="email" placeholder="email" required> <input name="name" placeholder="name" required> <button>Create + enroll</button></form><table>${rows}</table>`));
+  const rows = readUsers().map((user) => `<tr><td>${escapeHtml(user.email)}</td><td>${escapeHtml(user.name)}</td><td>${escapeHtml(user.status)}</td><td>${user.token ? `<a href="/admin/invite/${encodeURIComponent(user.token)}">Invite</a>` : 'Already enrolled'}</td></tr>`).join('');
+  res.send(page(`<h1>Users</h1><p><a href="/admin/logout">Logout</a></p><h2>Add existing enrolled user</h2><form method="post"><input type="hidden" name="action" value="existing"><input name="email" type="email" placeholder="email" required> <input name="name" placeholder="name" required> <button>Add local user</button></form><h2>Create user and enrollment invite</h2><form method="post"><input type="hidden" name="action" value="enroll"><input name="email" type="email" placeholder="email" required> <input name="name" placeholder="name" required> <button>Create + enroll</button></form><table>${rows}</table>`));
 });
 
 app.post('/admin/users', requireAdmin, async (req, res, next) => {
   try {
     const email = String(req.body.email ?? '').trim().toLowerCase();
     const name = String(req.body.name ?? '').trim();
+    const action = String(req.body.action ?? 'enroll');
     const users = readUsers();
     if (!email || !name) return res.status(400).send(page('<h1>Missing email or name</h1>'));
     if (users.some((user) => user.email === email)) return res.status(409).send(page('<h1>User already exists</h1>'));
+    if (action === 'existing') {
+      users.push({ id: crypto.randomUUID(), email, name, status: 'active', createdAt: new Date().toISOString() });
+      writeUsers(users);
+      return res.redirect('/admin/users');
+    }
     const enrollmentUrl = await createEnrollment(email);
     const token = crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '');
     users.push({ id: crypto.randomUUID(), email, name, status: 'invited', enrollmentUrl, token, createdAt: new Date().toISOString() });
@@ -81,6 +87,7 @@ app.get('/admin/invite/:token', requireAdmin, (req, res) => {
 app.get('/invite/:token', (req, res) => {
   const user = readUsers().find((candidate) => candidate.token === req.params.token);
   if (!user) return res.status(404).send(page('<h1>Invite not found</h1>'));
+  if (!user.enrollmentUrl) return res.status(404).send(page('<h1>No enrollment invite for this user</h1>'));
   const qr = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(user.enrollmentUrl)}`;
   res.send(page(`<h1>Invite ${escapeHtml(user.name)}</h1><p>Scan this enrollment QR code.</p><p><img src="${qr}" width="280" height="280" alt="Enrollment QR"></p><p><a href="/app?user=${encodeURIComponent(user.email)}">Open app</a></p>`));
 });

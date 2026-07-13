@@ -114,6 +114,7 @@ function users(): void {
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $email = strtolower(trim($_POST['email'] ?? ''));
         $name = trim($_POST['name'] ?? '');
+        $action = $_POST['action'] ?? 'enroll';
         $users = read_users();
 
         foreach ($users as $user) {
@@ -122,6 +123,18 @@ function users(): void {
                 echo page('<h1>User already exists</h1>');
                 return;
             }
+        }
+
+        if ($action === 'existing') {
+            $users[] = [
+                'id' => bin2hex(random_bytes(16)),
+                'email' => $email,
+                'name' => $name,
+                'status' => 'active',
+            ];
+            write_users($users);
+            redirect('/admin/users');
+            return;
         }
 
         $token = bin2hex(random_bytes(32));
@@ -140,10 +153,11 @@ function users(): void {
 
     $rows = '';
     foreach (read_users() as $user) {
-        $rows .= '<tr><td>' . h($user['email']) . '</td><td>' . h($user['name']) . '</td><td>' . h($user['status']) . '</td><td><a href="/admin/invite/' . rawurlencode($user['token']) . '">Invite</a></td></tr>';
+        $inviteAction = !empty($user['token']) ? '<a href="/admin/invite/' . rawurlencode($user['token']) . '">Invite</a>' : 'Already enrolled';
+        $rows .= '<tr><td>' . h($user['email']) . '</td><td>' . h($user['name']) . '</td><td>' . h($user['status']) . '</td><td>' . $inviteAction . '</td></tr>';
     }
 
-    echo page('<h1>Users</h1><p><a href="/admin/logout">Logout</a></p><form method="post"><input name="email" type="email" placeholder="email" required> <input name="name" placeholder="name" required> <button>Create + enroll</button></form><table>' . $rows . '</table>');
+    echo page('<h1>Users</h1><p><a href="/admin/logout">Logout</a></p><h2>Add existing enrolled user</h2><form method="post"><input type="hidden" name="action" value="existing"><input name="email" type="email" placeholder="email" required> <input name="name" placeholder="name" required> <button>Add local user</button></form><h2>Create user and enrollment invite</h2><form method="post"><input type="hidden" name="action" value="enroll"><input name="email" type="email" placeholder="email" required> <input name="name" placeholder="name" required> <button>Create + enroll</button></form><table>' . $rows . '</table>');
 }
 
 function admin_invite(string $token): void {
@@ -163,6 +177,11 @@ function invite(string $token): void {
     if (!$user) {
         http_response_code(404);
         echo page('<h1>Invite not found</h1>');
+        return;
+    }
+    if (empty($user['enrollmentUrl'])) {
+        http_response_code(404);
+        echo page('<h1>No enrollment invite for this user</h1>');
         return;
     }
 
